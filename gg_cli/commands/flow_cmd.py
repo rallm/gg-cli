@@ -3,7 +3,7 @@ import sys
 from gg_cli.commands.base import BaseCommand
 from gg_cli.config import ConfigManager
 from gg_cli.git_ops import GitOps
-from gg_cli.utils import log_info, log_success, log_error
+from gg_cli.utils import log_info, log_success, log_error, parse_commit_time
 
 class FlowCommand(BaseCommand):
     def setup_args(self) -> None:
@@ -83,14 +83,15 @@ class HotfixCommand(BaseCommand):
             GitOps.run_command(["checkout", "-b", branch_name, main_branch])
             log_success(f"Started hotfix '{new_ver}'.")
 
+
 class FinishCommand(BaseCommand):
     def setup_args(self) -> None:
-        pass
+        self.parser.add_argument("--time", required=False, help="Custom timestamp (e.g. *-07-04_*-32 or 2026-07-04_17-32-45)")
 
-    def _get_profile_env(self, config_mgr: ConfigManager) -> dict:
+    def _get_profile_env(self, config_mgr: ConfigManager, formatted_time: str = None) -> dict:
         """
         Retrieves the isolated author/committer profile from config
-        to inject into Git commands that generate commits or tags.
+        and injects custom timestamps to generate commits or tags.
         """
         config = config_mgr.load()
         env_override = {}
@@ -102,6 +103,11 @@ class FinishCommand(BaseCommand):
             env_override["GIT_AUTHOR_EMAIL"] = prof_email
             env_override["GIT_COMMITTER_NAME"] = prof_name
             env_override["GIT_COMMITTER_EMAIL"] = prof_email
+
+        if formatted_time:
+            env_override["GIT_AUTHOR_DATE"] = formatted_time
+            env_override["GIT_COMMITTER_DATE"] = formatted_time
+
         return env_override
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -110,13 +116,15 @@ class FinishCommand(BaseCommand):
         dev_branch = config_mgr.get("develop_branch")
         main_branch = config_mgr.get("main_branch")
         
-        # Load profile environment variables for merge/tag operations
-        env_override = self._get_profile_env(config_mgr)
+        formatted_time = parse_commit_time(args.time)
+        env_override = self._get_profile_env(config_mgr, formatted_time)
+
+        if formatted_time:
+            log_info(f"Applying custom timestamp for finish operations: {formatted_time}")
 
         if current_branch.startswith("feature/"):
             log_info(f"Finishing feature branch '{current_branch}'...")
             GitOps.run_command(["checkout", dev_branch])
-            # Passing env_override to merge so the merge commit uses the custom profile
             GitOps.run_command(["merge", "--no-ff", current_branch], env=env_override)
             GitOps.run_command(["branch", "-d", current_branch])
             log_success(f"Feature merged into '{dev_branch}' and cleaned up.")
@@ -130,7 +138,6 @@ class FinishCommand(BaseCommand):
             GitOps.run_command(["merge", "--no-ff", current_branch], env=env_override)
 
             log_info(f"Tagging release '{ver}'...")
-            # Passing env_override to tag creation as well
             GitOps.run_command(["tag", "-a", ver, "-m", f"Release {ver}"], env=env_override)
 
             log_info(f"Merging into '{dev_branch}'...")
