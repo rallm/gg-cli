@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gg-cli"
+version = "0.1.0"
+description = "Advanced Git Assistant CLI with modular Git Flow and Profile Management"
+authors = [{name = "Software Engineer"}]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+gg = "gg_cli.main:cli_entry"
