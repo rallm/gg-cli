@@ -5,6 +5,24 @@ from gg_cli.config import ConfigManager
 from gg_cli.git_ops import GitOps
 from gg_cli.utils import log_info, log_success, log_error, parse_commit_time
 
+def resolve_primary_branch(config_mgr: ConfigManager) -> str:
+    """
+    Resolves the primary branch name (main vs master).
+    If the configured branch does not exist in the repository,
+    it automatically scans for standard alternatives and updates the config.
+    """
+    configured = config_mgr.get("main_branch") or "main"
+    if GitOps.branch_exists(configured):
+        return configured
+        
+    for candidate in ["main", "master"]:
+        if GitOps.branch_exists(candidate):
+            config_mgr.update("main_branch", candidate)
+            log_info(f"Auto-detected primary branch as '{candidate}'. Configuration updated.")
+            return candidate
+            
+    return configured
+
 class FlowCommand(BaseCommand):
     def setup_args(self) -> None:
         subparsers = self.parser.add_subparsers(dest="flow_action", required=True)
@@ -77,12 +95,11 @@ class HotfixCommand(BaseCommand):
             new_ver = f"{parts[0]}.{parts[1]}.{parts[2]}"
             config_mgr.update("version", new_ver)
 
-            main_branch = config_mgr.get("main_branch")
+            main_branch = resolve_primary_branch(config_mgr)
             branch_name = f"hotfix/{new_ver}"
             log_info(f"Creating hotfix branch '{branch_name}' from '{main_branch}'...")
             GitOps.run_command(["checkout", "-b", branch_name, main_branch])
             log_success(f"Started hotfix '{new_ver}'.")
-
 
 class FinishCommand(BaseCommand):
     def setup_args(self) -> None:
@@ -114,7 +131,7 @@ class FinishCommand(BaseCommand):
         current_branch = GitOps.get_current_branch()
         config_mgr = ConfigManager()
         dev_branch = config_mgr.get("develop_branch")
-        main_branch = config_mgr.get("main_branch")
+        main_branch = resolve_primary_branch(config_mgr)
         
         formatted_time = parse_commit_time(args.time)
         env_override = self._get_profile_env(config_mgr, formatted_time)
