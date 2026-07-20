@@ -8,7 +8,6 @@ from gg_cli.utils import log_info, log_success, log_error
 class FlowCommand(BaseCommand):
     def setup_args(self) -> None:
         subparsers = self.parser.add_subparsers(dest="flow_action", required=True)
-
         feat_parser = subparsers.add_parser("start", help="Start a feature, release, or hotfix")
         feat_parser.add_argument("name_or_type", help="Feature name or version bump type (m/M)")
 
@@ -88,16 +87,37 @@ class FinishCommand(BaseCommand):
     def setup_args(self) -> None:
         pass
 
+    def _get_profile_env(self, config_mgr: ConfigManager) -> dict:
+        """
+        Retrieves the isolated author/committer profile from config
+        to inject into Git commands that generate commits or tags.
+        """
+        config = config_mgr.load()
+        env_override = {}
+        prof_name = config.get("profile", {}).get("name")
+        prof_email = config.get("profile", {}).get("email")
+
+        if prof_name and prof_email:
+            env_override["GIT_AUTHOR_NAME"] = prof_name
+            env_override["GIT_AUTHOR_EMAIL"] = prof_email
+            env_override["GIT_COMMITTER_NAME"] = prof_name
+            env_override["GIT_COMMITTER_EMAIL"] = prof_email
+        return env_override
+
     def execute(self, args: argparse.Namespace) -> None:
         current_branch = GitOps.get_current_branch()
         config_mgr = ConfigManager()
         dev_branch = config_mgr.get("develop_branch")
         main_branch = config_mgr.get("main_branch")
+        
+        # Load profile environment variables for merge/tag operations
+        env_override = self._get_profile_env(config_mgr)
 
         if current_branch.startswith("feature/"):
             log_info(f"Finishing feature branch '{current_branch}'...")
             GitOps.run_command(["checkout", dev_branch])
-            GitOps.run_command(["merge", "--no-ff", current_branch])
+            # Passing env_override to merge so the merge commit uses the custom profile
+            GitOps.run_command(["merge", "--no-ff", current_branch], env=env_override)
             GitOps.run_command(["branch", "-d", current_branch])
             log_success(f"Feature merged into '{dev_branch}' and cleaned up.")
 
@@ -107,14 +127,15 @@ class FinishCommand(BaseCommand):
 
             log_info(f"Merging into '{main_branch}'...")
             GitOps.run_command(["checkout", main_branch])
-            GitOps.run_command(["merge", "--no-ff", current_branch])
+            GitOps.run_command(["merge", "--no-ff", current_branch], env=env_override)
 
             log_info(f"Tagging release '{ver}'...")
-            GitOps.run_command(["tag", "-a", ver, "-m", f"Release {ver}"])
+            # Passing env_override to tag creation as well
+            GitOps.run_command(["tag", "-a", ver, "-m", f"Release {ver}"], env=env_override)
 
             log_info(f"Merging into '{dev_branch}'...")
             GitOps.run_command(["checkout", dev_branch])
-            GitOps.run_command(["merge", "--no-ff", current_branch])
+            GitOps.run_command(["merge", "--no-ff", current_branch], env=env_override)
 
             GitOps.run_command(["branch", "-d", current_branch])
             log_success(f"Version '{ver}' released, tagged, and merged successfully.")
