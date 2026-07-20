@@ -68,3 +68,10 @@ class GitOps:
     def get_global_config(cls, key: str) -> str:
         code, stdout, _ = cls.run_command(["config", "--global", "--get", key], check=False)
         return stdout if code == 0 else ""
+    
+    @classmethod
+    def get_merged_remote_branches(cls, target_branch: str) -> List[str]:
+        code, stdout, _ = cls.run_command(["branch", "-r", "--merged", target_branch], check=False)
+        if code != 0 or not stdout:
+            return []
+        return [b.strip() for b in stdout.splitlines() if b.strip()]
