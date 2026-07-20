@@ -33,14 +33,26 @@ class GitOps:
         return code == 0
 
     @classmethod
+    def is_empty_repo(cls) -> bool:
+        """
+        Checks if the repository has no commits yet (unborn HEAD).
+        """
+        code, _, _ = cls.run_command(["rev-parse", "--verify", "HEAD"], check=False)
+        return code != 0
+
+    @classmethod
     def get_repo_root(cls) -> str:
         _, stdout, _ = cls.run_command(["rev-parse", "--show-toplevel"])
         return stdout
 
     @classmethod
     def get_current_branch(cls) -> str:
-        _, stdout, _ = cls.run_command(["branch", "--show-current"])
-        return stdout
+        code, stdout, _ = cls.run_command(["branch", "--show-current"], check=False)
+        if code == 0 and stdout:
+            return stdout
+        # Fallback for unborn branches where 'branch --show-current' might be empty in older git versions
+        _, ref_output, _ = cls.run_command(["symbolic-ref", "--short", "HEAD"], check=False)
+        return ref_output if ref_output else "main"
 
     @classmethod
     def branch_exists(cls, branch_name: str) -> bool:
@@ -51,3 +63,8 @@ class GitOps:
     def get_remotes(cls) -> List[str]:
         _, stdout, _ = cls.run_command(["remote", "-v"], check=False)
         return stdout.splitlines() if stdout else []
+
+    @classmethod
+    def get_global_config(cls, key: str) -> str:
+        code, stdout, _ = cls.run_command(["config", "--global", "--get", key], check=False)
+        return stdout if code == 0 else ""
