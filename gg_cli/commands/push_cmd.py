@@ -3,20 +3,22 @@ import sys
 from gg_cli.commands.base import BaseCommand
 from gg_cli.config import ConfigManager
 from gg_cli.git_ops import GitOps
-from gg_cli.utils import log_info, log_success, log_warning
+from gg_cli.utils import log_info, log_success, log_warning, log_error
 
 class PushCommand(BaseCommand):
     def setup_args(self) -> None:
-        pass
+        # Add an optional positional argument for the remote name, defaulting to "origin"
+        self.parser.add_argument("remote", nargs="?", default="origin", help="Name of the remote to push to (default: origin)")
 
-    def _clean_merged_remote_branches(self, config_mgr: ConfigManager) -> None:
+    def _clean_merged_remote_branches(self, config_mgr: ConfigManager, target_remote: str) -> None:
         """
         Identifies and deletes remote branches that have already been 
-        merged into develop or main branches on the remote server.
+        merged into develop or main branches on the target remote server.
         """
-        log_info("Checking for merged remote branches to clean up...")
+        log_info(f"Checking for merged remote branches on '{target_remote}' to clean up...")
         
-        GitOps.run_command(["fetch", "--prune"], check=False)
+        # Fetch with prune specifically for the target remote
+        GitOps.run_command(["fetch", target_remote, "--prune"], check=False)
         
         dev_branch = config_mgr.get("develop_branch") or "develop"
         main_branch = config_mgr.get("main_branch") or "main"
@@ -38,6 +40,10 @@ class PushCommand(BaseCommand):
             
             remote_name, branch_name = parts[0], parts[1]
             
+            # Only clean branches belonging to the specific remote we just pushed to
+            if remote_name != target_remote:
+                continue
+            
             if branch_name in protected_branches:
                 continue
             
@@ -50,15 +56,29 @@ class PushCommand(BaseCommand):
                 log_warning(f"Could not delete '{branch_name}': {stderr}")
 
         if cleaned_count == 0:
-            log_info("No merged remote branches needed cleanup.")
+            log_info(f"No merged remote branches needed cleanup on '{target_remote}'.")
 
     def execute(self, args: argparse.Namespace) -> None:
         config_mgr = ConfigManager()
         config = config_mgr.load()
+        target_remote = args.remote
 
+        # 1. Validation: Check if any remotes exist and if the requested remote is valid
+        code, stdout, _ = GitOps.run_command(["remote"], check=False)
+        available_remotes = [r.strip() for r in stdout.splitlines() if r.strip()]
+
+        if not available_remotes:
+            log_error("No remotes configured. Add a remote using 'gg edit --remote-add <name> <url>'.")
+            sys.exit(1)
+
+        if target_remote not in available_remotes:
+            log_error(f"Remote '{target_remote}' not found. Available remotes: {', '.join(available_remotes)}")
+            sys.exit(1)
+
+        # 2. Push Confirmation check
         if config.get("push_confirmation", False):
             try:
-                ans = input("Are you sure you want to push all branches/tags and clean merged remote branches? [y/N]: ").strip().lower()
+                ans = input(f"Are you sure you want to push all branches/tags to '{target_remote}' and clean merged branches? [y/N]: ").strip().lower()
                 if ans != 'y':
                     log_info("Push operation aborted by user.")
                     return
@@ -66,12 +86,13 @@ class PushCommand(BaseCommand):
                 print()
                 sys.exit(1)
 
-        log_info("Pushing all local branches...")
-        GitOps.run_command(["push", "--all"])
+        # 3. Execution
+        log_info(f"Pushing all local branches to '{target_remote}'...")
+        GitOps.run_command(["push", target_remote, "--all"])
         
-        log_info("Pushing all tags...")
-        GitOps.run_command(["push", "--tags"])
+        log_info(f"Pushing all tags to '{target_remote}'...")
+        GitOps.run_command(["push", target_remote, "--tags"])
         
-        self._clean_merged_remote_branches(config_mgr)
+        self._clean_merged_remote_branches(config_mgr, target_remote)
         
-        log_success("All branches and tags pushed, and remote server cleaned successfully.")
+        log_success(f"All branches and tags pushed to '{target_remote}', and server cleaned successfully.")
